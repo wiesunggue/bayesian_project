@@ -1,0 +1,140 @@
+library(readxl)
+dat <- read.csv("/home/ywhan/R_BVB-new/MLB datasets-2021-demeaned.csv")
+colnames(dat)
+head(dat)
+
+mm <- matrix(dat$m, 60, 6, byrow = T)
+x1 <- matrix(dat$x_1, 60, 6, byrow = T)
+x2 <- matrix(dat$x_2, 60, 6, byrow = T)
+
+BABIP <- matrix(dat$BABIP, 60, 6, byrow = T)
+BBK <- matrix(dat$'BB.K', 60, 6, byrow = T)
+WPA <- matrix(dat$WPA, 60, 6, byrow = T)
+
+LD <- matrix(dat$'LD.', 60, 6, byrow = T)*100
+GB <- matrix(dat$'GB.', 60, 6, byrow = T)*100
+FB <- matrix(dat$'FB.', 60, 6, byrow = T)*100
+HRFB <- matrix(dat$'HR.FB', 60, 6, byrow = T)*100
+pull <- matrix(dat$'Pull.', 60, 6, byrow = T)*100
+cent <- matrix(dat$'Cent.', 60, 6, byrow = T)*100
+oppo <- matrix(dat$'Oppo.', 60, 6, byrow = T)*100
+
+likbpq <- function(theta, mm, x1, x2, WPA, cent, BABIP, BBK, LD, GB, 
+                   oppo, FB, HRFB, pull){ 
+  constp  <- theta[1]
+  bWPAp  <- theta[2] 
+  bcentp <- theta[3] 
+  bBABIP <- theta[4] 
+  bBBK   <- theta[5]
+  bLD    <- theta[6]
+  bGB    <- theta[7]
+  boppo  <- theta[8]
+  constq <- theta[9]
+  bWPAq  <- theta[10]
+  bcentq <- theta[11]
+  bFB    <- theta[12]
+  bHRFB  <- theta[13]
+  bpull  <- theta[14]
+  
+  zbetap <- constp + bWPAp*WPA + bcentp*cent/100 + bBABIP*BABIP + bBBK*BBK + 
+    bLD*LD/100 + bGB*GB/100 + boppo*oppo/100 
+  zbetaq <- constq + bWPAq*WPA + bcentq*cent/100 + bFB*FB/100 + bHRFB*HRFB/100 +
+    bpull*pull/100 
+  loglik <- sum(log(choose(mm, x1)) + x1*zbetap - mm*log(1 + exp(zbetap)) +
+                  log(choose(x1, x2)) + x2*zbetaq - x1*log(1 + exp(zbetaq)))
+  return(-loglik) 
+}
+
+etheta <- constrOptim(theta = rep(1, 14), f = likbpq, 
+                      grad=NULL, method="Nelder-Mead", ui = 1, ci = -9999, 
+                      outer.iterations=1000,outer.eps=1e-10, mm = mm, x1 = x1, x2 = x2,
+                      WPA = WPA, cent = cent, BABIP = BABIP, BBK = BBK, LD = LD, GB = GB, 
+                      oppo = oppo, FB = FB, HRFB= HRFB, pull = pull)
+
+zbp <- etheta$par[1] + etheta$par[2]*WPA + etheta$par[3]*cent/100 + 
+  etheta$par[4]*BABIP + etheta$par[5]*BBK + etheta$par[6]*LD/100 + 
+  etheta$par[7]*GB/100 + etheta$par[8]*oppo/100
+
+zbq <- etheta$par[9] + etheta$par[10]*WPA + etheta$par[11]*cent/100 + 
+  etheta$par[12]*FB/100 + etheta$par[13]*HRFB/100 + 
+  etheta$par[14]*pull/100 
+
+etap <- log((x1/mm)/(1 - (x1/mm))) - zbp  ## Residuals for p
+etaq <- log((x2/x1)/(1 - (x2/x1))) - zbq  ## Residuals for q
+
+require(numDeriv)
+
+finfo <- hessian(likbpq, x = etheta$par, mm = mm, x1 = x1, x2 = x2,
+                 WPA = WPA, cent = cent, BABIP = BABIP, BBK = BBK, LD = LD, GB = GB, 
+                 oppo = oppo, FB = FB, HRFB= HRFB, pull = pull) ## Fisher info. matrix
+
+vcovet <- solve(finfo) ## variance-covariance matrix
+TestSt = etheta$par/sqrt(diag(vcovet)) ## test statistics
+PValue = 1 - pnorm(abs(etheta$par/sqrt(diag(vcovet)))) ## p-value
+
+names(etheta$par) <- c("bp0","bp1","bp2","bp3","bp4","bp5","bp6","bp7",
+                       "bq0","bq1","bq2","bq8","bq9","bq10")
+MLE <- round(etheta$par, 4) # Estimates 
+'   bp0     bp1     bp2     bp3     bp4     bp5     bp6     bp7     bq0     bq1     bq2     bq8     bq9    bq10 
+-1.0362  0.1334  0.0609  1.6197  0.1327  0.2536 -0.0994  0.2794 -0.4136 -0.0729 -0.5332  3.1443  2.7858  0.2409 '
+
+{vcovet <- solve(finfo) ## variance-covariance matrix
+se <- sqrt(diag(vcovet))  ## standard error
+z <- qnorm(.975)  ## 95% C.I.
+ci.L <- round(MLE-z*se, digits = 4)
+ci.R <- round(MLE+z*se, digits = 4)
+
+paste0('(',ci.L,',',ci.R,')')}
+round(data.frame(MLE, se, TestSt, PValue) , 4)
+
+# ################################################################################
+# ################################################################################
+# ## Take out the io-th observation, 
+# ## Build the model and predict p and q 
+# ## based on the covariates of the io-th observation
+# 
+# io <- 1
+# 
+# etheta <- constrOptim(theta = rep(1, 14), f = likbpq, 
+#                       grad=NULL, method="Nelder-Mead", ui = 1, ci = -9999, 
+#                       outer.iterations=1000,outer.eps=1e-10, mm = mm[-io,], x1 = x1[-io,], 
+#                       x2 = x2[-io,], WPA = WPA[-io,], cent = cent[-io,], BABIP = BABIP[-io,], BBK = BBK[-io,], 
+#                       LD = LD[-io,], GB = GB[-io,], oppo = oppo[-io,], FB = FB[-io,], 
+#                       HRFB = HRFB[-io,], pull = pull[-io,])
+# 
+# zbp <- etheta$par[1] + etheta$par[2]*WPA + etheta$par[3]*cent/100 + 
+#   etheta$par[4]*BABIP + etheta$par[5]*BBK + etheta$par[6]*LD/100 + 
+#   etheta$par[7]*GB/100 + etheta$par[8]*oppo/100
+# 
+# zbq <- etheta$par[9] + etheta$par[10]*WPA + etheta$par[11]*cent/100 + 
+#   etheta$par[12]*FB/100 + etheta$par[13]*HRFB/100 + 
+#   etheta$par[14]*pull/100 
+# 
+# (exp(zbp)/(1 + exp(zbp)))[io,] # predicted value of p 
+# (x1/mm)[io,]                   # observed value of p 
+# 
+# (exp(zbq)/(1 + exp(zbq)))[io,] # predicted value of q 
+# (x2/x1)[io,]                   # observed value of q 
+# 
+# 
+# par(mfrow=c(2,1), oma = c(0,0,0,0))  
+# # outer mar default is c(0,0,0,0)
+# # inner mar default is c(5, 4, 4, 2) + 0.1
+# 
+# 
+# plot(4:9, (exp(zbp)/(1 + exp(zbp)))[io,], type = "o", ylim = c(0, 1),
+#      main = "Observed and predicted values of p for Apr. to Sept.",
+#      xlab = "Month", ylab = "Batting average", cex = 1.5)       
+# points(4:9, (x1/mm)[io,], type = "o", lty = 2, pch = 16, cex = 1.5)    
+# 
+# legend(4, 1, legend = c("Predicted value", "Observed value"), lty = 1:2, 
+#        pch = c(1, 16), cex = 0.8)
+# 
+# plot(4:9, (exp(zbq)/(1 + exp(zbq)))[io,], type = "o", ylim = c(0, 1),
+#      main = "Observed and predicted values of q for Apr. to Sept.",
+#      xlab = "Month", ylab = "Proportion for extra-base-hit", cex = 1.5)      
+# points(4:9, (x2/x1)[io,], type = "o", lty = 2, pch = 16, cex = 1.5)      
+# 
+# legend(4, 1, legend = c("Predicted value", "Observed value"), lty = 1:2, 
+#        pch = c(1, 16), cex = 0.8)
+# 
